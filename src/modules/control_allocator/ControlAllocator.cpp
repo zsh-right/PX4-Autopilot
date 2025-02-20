@@ -392,18 +392,18 @@ ControlAllocator::Run()
 					result = vehicle_command_ack_s::VEHICLE_CMD_RESULT_TEMPORARILY_REJECTED;
 					PX4_INFO("Control surface preflight check rejected (armed)");
 				}
-			}
 
-			if (vehicle_command.from_external) {
-				vehicle_command_ack_s command_ack{};
-				command_ack.timestamp = hrt_absolute_time();
-				command_ack.command = vehicle_command.command;
-				command_ack.result = result;
-				command_ack.target_system = vehicle_command.source_system;
-				command_ack.target_component = vehicle_command.source_component;
+				if (vehicle_command.from_external) {
+					vehicle_command_ack_s command_ack{};
+					command_ack.timestamp = hrt_absolute_time();
+					command_ack.command = vehicle_command.command;
+					command_ack.result = result;
+					command_ack.target_system = vehicle_command.source_system;
+					command_ack.target_component = vehicle_command.source_component;
 
-				uORB::Publication<vehicle_command_ack_s> command_ack_pub{ORB_ID(vehicle_command_ack)};
-				command_ack_pub.publish(command_ack);
+					uORB::Publication<vehicle_command_ack_s> command_ack_pub{ORB_ID(vehicle_command_ack)};
+					command_ack_pub.publish(command_ack);
+				}
 			}
 		}
 	}
@@ -530,8 +530,11 @@ ControlAllocator::Run()
 
 void ControlAllocator::preflight_check_start()
 {
-	_preflight_check_phase = 0;
-	_preflight_check_running = true;
+	if (!_preflight_check_running) {
+		_preflight_check_phase = 0;
+		_preflight_check_running = true;
+		_last_preflight_check_update = hrt_absolute_time();
+	}
 }
 
 void ControlAllocator::preflight_check_stop()
@@ -542,11 +545,11 @@ void ControlAllocator::preflight_check_stop()
 void ControlAllocator::preflight_check_update_state()
 {
 	if (_preflight_check_running) {
-		// bool tiltrotor = dynamic_cast<ActuatorEffectivenessTiltrotorVTOL*>(_actuator_effectiveness) != nullptr;
+
 		bool tiltrotor = _effectiveness_source_id == EffectivenessSource::TILTROTOR_VTOL;
 
-		// cycle through roll, pitch, yaw, and for each one inject positive and
-		// negative torque setpoints.
+		// cycle through roll, pitch, yaw(, collective tilt) and for
+		// each one inject positive and negative torque setpoints.
 
 		int n_axes = 3;
 
@@ -589,9 +592,7 @@ void ControlAllocator::preflight_check_overwrite_torque_sp(matrix::Vector<float,
 			c[1](2) = 0.;
 			c[1](axis) = negative ? -1.f : 1.f;
 		}
-
 	}
-
 }
 
 float ControlAllocator::preflight_check_get_tilt_control()
