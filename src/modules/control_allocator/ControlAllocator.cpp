@@ -46,6 +46,8 @@
 #include <mathlib/math/Limits.hpp>
 #include <mathlib/math/Functions.hpp>
 
+#include <math.h>
+
 using namespace matrix;
 using namespace time_literals;
 
@@ -347,7 +349,7 @@ ControlAllocator::Run()
 			_armed = vehicle_status.arming_state == vehicle_status_s::ARMING_STATE_ARMED;
 
 			if (_armed) {
-				preflight_check_stop();
+				preflight_check_abort();
 			}
 
 			ActuatorEffectiveness::FlightPhase flight_phase{ActuatorEffectiveness::FlightPhase::HOVER_FLIGHT};
@@ -386,24 +388,16 @@ ControlAllocator::Run()
 				if (!_armed) {
 					// currently this does not check prearmed status. if not prearmed, it will just do nothing.
 					// should we output some sort of mild warning in that case?
-					preflight_check_start();
+
+					preflight_check_start(vehicle_command);
+					result = vehicle_command_ack_s::VEHICLE_CMD_RESULT_IN_PROGRESS;
 
 				} else {
 					result = vehicle_command_ack_s::VEHICLE_CMD_RESULT_TEMPORARILY_REJECTED;
 					PX4_INFO("Control surface preflight check rejected (armed)");
 				}
 
-				if (vehicle_command.from_external) {
-					vehicle_command_ack_s command_ack{};
-					command_ack.timestamp = hrt_absolute_time();
-					command_ack.command = vehicle_command.command;
-					command_ack.result = result;
-					command_ack.target_system = vehicle_command.source_system;
-					command_ack.target_component = vehicle_command.source_component;
-
-					uORB::Publication<vehicle_command_ack_s> command_ack_pub{ORB_ID(vehicle_command_ack)};
-					command_ack_pub.publish(command_ack);
-				}
+				preflight_check_send_ack(result);
 			}
 		}
 	}
@@ -475,10 +469,7 @@ ControlAllocator::Run()
 		}
 
 		preflight_check_update_state();
-
-		if (_preflight_check_running) {
-			preflight_check_overwrite_torque_sp(c);
-		}
+		preflight_check_overwrite_torque_sp(c);
 
 		for (int i = 0; i < _num_control_allocation; ++i) {
 
@@ -528,47 +519,73 @@ ControlAllocator::Run()
 	perf_end(_loop_perf);
 }
 
-void ControlAllocator::preflight_check_start()
+void ControlAllocator::preflight_check_start(vehicle_command_s &cmd)
 {
-	if (!_preflight_check_running) {
-		_preflight_check_phase = 0;
-		_preflight_check_running = true;
-		_last_preflight_check_update = hrt_absolute_time();
+
+	if (_preflight_check_running) {
+		preflight_check_abort();
 	}
+
+	int axis = (uint8_t) lroundf(cmd.param1);
+	float input = cmd.param2;
+
+	_preflight_check_running = true;
+	_preflight_check_axis = axis;
+	_preflight_check_input = input;
+	_preflight_check_started = hrt_absolute_time();
+	_last_preflight_check_command = cmd;
 }
 
-void ControlAllocator::preflight_check_stop()
+void ControlAllocator::preflight_check_send_ack(uint8_t result)
+{
+
+	hrt_abstime now = hrt_absolute_time();
+
+	if (_last_preflight_check_command.from_external) {
+		vehicle_command_ack_s command_ack{};
+		command_ack.timestamp = now;
+		command_ack.command = _last_preflight_check_command.command;
+		command_ack.result = result;
+		command_ack.target_system = _last_preflight_check_command.source_system;
+		command_ack.target_component = _last_preflight_check_command.source_component;
+
+		uORB::Publication<vehicle_command_ack_s> command_ack_pub{ORB_ID(vehicle_command_ack)};
+		command_ack_pub.publish(command_ack);
+	}
+
+	_preflight_check_last_ack = now;
+}
+
+void ControlAllocator::preflight_check_abort()
 {
 	_preflight_check_running = false;
+	preflight_check_send_ack(vehicle_command_ack_s::VEHICLE_CMD_RESULT_CANCELLED);
+
 }
+
+
+void ControlAllocator::preflight_check_finish()
+{
+	_preflight_check_running = false;
+	preflight_check_send_ack(vehicle_command_ack_s::VEHICLE_CMD_RESULT_ACCEPTED);
+}
+
 
 void ControlAllocator::preflight_check_update_state()
 {
+	static uint32_t PREFLIGHT_CHECK_DURATION = 500_ms;
+	static uint32_t PREFLIGHT_CHECK_ACK_PERIOD = 1000_ms;
+
 	if (_preflight_check_running) {
-
-		bool tiltrotor = _effectiveness_source_id == EffectivenessSource::TILTROTOR_VTOL;
-
-		// cycle through roll, pitch, yaw(, collective tilt) and for
-		// each one inject positive and negative torque setpoints.
-
-		int n_axes = 3;
-
-		if (tiltrotor) {
-			n_axes = 4;
-		}
-
-		int max_phase = 2 * n_axes;
-
 		hrt_abstime now = hrt_absolute_time();
 
-		if (now - _last_preflight_check_update >= 500_ms) {
-			_preflight_check_phase++;
-			_last_preflight_check_update = now;
+		if (now - _preflight_check_started >= PREFLIGHT_CHECK_DURATION) {
+			// alternative: never stop it here and instead let the GS send a stop message?
+			preflight_check_finish();
+		}
 
-			// terminate after one round
-			if (_preflight_check_phase >= max_phase) {
-				_preflight_check_running = false;
-			}
+		if (now - _preflight_check_last_ack >= PREFLIGHT_CHECK_ACK_PERIOD) {
+			preflight_check_send_ack(vehicle_command_ack_s::VEHICLE_CMD_RESULT_IN_PROGRESS);
 		}
 	}
 }
@@ -576,22 +593,38 @@ void ControlAllocator::preflight_check_update_state()
 void ControlAllocator::preflight_check_overwrite_torque_sp(matrix::Vector<float, NUM_AXES>
 		(&c)[ActuatorEffectiveness::MAX_NUM_MATRICES])
 {
+	if (!_preflight_check_running) { return; }
 
-	int axis = _preflight_check_phase / 2;
-	int negative = _preflight_check_phase % 2;
+	int axis = -1;
 
-	if (axis < 3) {
-		c[0](0) = 0.;
-		c[0](1) = 0.;
-		c[0](2) = 0.;
-		c[0](axis) = negative ? -1.f : 1.f;
+	switch (_preflight_check_axis) {
+	case vehicle_command_s::AXIS_ROLL:
+		axis = 0;
+		break;
 
-		if (_num_control_allocation > 1) {
-			c[1](0) = 0.;
-			c[1](1) = 0.;
-			c[1](2) = 0.;
-			c[1](axis) = negative ? -1.f : 1.f;
-		}
+	case vehicle_command_s::AXIS_PITCH:
+		axis = 1;
+		break;
+
+	case vehicle_command_s::AXIS_YAW:
+		axis = 2;
+		break;
+
+	default:
+		// If none of roll, pitch, yaw, we do nothing here
+		return;
+	}
+
+	c[0](0) = 0.;
+	c[0](1) = 0.;
+	c[0](2) = 0.;
+	c[0](axis) = _preflight_check_input;
+
+	if (_num_control_allocation > 1) {
+		c[1](0) = 0.;
+		c[1](1) = 0.;
+		c[1](2) = 0.;
+		c[1](axis) = _preflight_check_input;
 	}
 }
 

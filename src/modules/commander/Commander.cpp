@@ -303,7 +303,7 @@ int Commander::custom_command(int argc, char *argv[])
 	}
 
 	if (!strcmp(argv[0], "cs_check")) {
-		send_vehicle_command(vehicle_command_s::VEHICLE_CMD_DO_PREFLIGHT_CS_CHECK);
+		send_vehicle_command(vehicle_command_s::VEHICLE_CMD_DO_PREFLIGHT_CS_CHECK, vehicle_command_s::AXIS_ROLL, 0.5);
 		return 0;
 	}
 
