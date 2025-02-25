@@ -303,7 +303,34 @@ int Commander::custom_command(int argc, char *argv[])
 	}
 
 	if (!strcmp(argv[0], "cs_check")) {
-		send_vehicle_command(vehicle_command_s::VEHICLE_CMD_DO_PREFLIGHT_CS_CHECK, vehicle_command_s::AXIS_ROLL, 0.5);
+
+		// hardcoded values. intended just for testing, remove before PR.
+
+		if (argc > 1) {
+			if (!strcmp(argv[1], "roll")) {
+				send_vehicle_command(vehicle_command_s::VEHICLE_CMD_DO_PREFLIGHT_CS_CHECK, vehicle_command_s::AXIS_ROLL, 1.0);
+
+			} else if (!strcmp(argv[1], "pitch")) {
+				send_vehicle_command(vehicle_command_s::VEHICLE_CMD_DO_PREFLIGHT_CS_CHECK, vehicle_command_s::AXIS_PITCH, 1.0);
+
+			} else if (!strcmp(argv[1], "yaw")) {
+				send_vehicle_command(vehicle_command_s::VEHICLE_CMD_DO_PREFLIGHT_CS_CHECK, vehicle_command_s::AXIS_YAW, 1.0);
+
+			} else if (!strcmp(argv[1], "tilt")) {
+				send_vehicle_command(vehicle_command_s::VEHICLE_CMD_DO_PREFLIGHT_CS_CHECK, vehicle_command_s::AXIS_COLLECTIVE_TILT,
+						     1.0);
+
+			} else {
+				PX4_ERR("argument %s unsupported.", argv[1]);
+				return 1;
+			}
+
+			return 0;
+
+		} else {
+			PX4_ERR("missing argument");
+		}
+
 		return 0;
 	}
 
