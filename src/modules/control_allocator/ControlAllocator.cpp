@@ -378,37 +378,14 @@ ControlAllocator::Run()
 	}
 
 	{
-		vehicle_command_s vehicle_command;
-
-		if (_vehicle_command_sub.update(&vehicle_command)) {
-
-			uint8_t result = vehicle_command_ack_s::VEHICLE_CMD_RESULT_ACCEPTED;
-
-			if (vehicle_command.command == vehicle_command_s::VEHICLE_CMD_DO_PREFLIGHT_CS_CHECK) {
-				if (!_armed) {
-					// currently this does not check prearmed status. if not prearmed, it will just do nothing.
-					// should we output some sort of mild warning in that case?
-
-					preflight_check_start(vehicle_command);
-					result = vehicle_command_ack_s::VEHICLE_CMD_RESULT_IN_PROGRESS;
-
-				} else {
-					result = vehicle_command_ack_s::VEHICLE_CMD_RESULT_TEMPORARILY_REJECTED;
-					PX4_INFO("Control surface preflight check rejected (armed)");
-				}
-
-				preflight_check_send_ack(result);
-			}
-		}
-	}
-
-	{
 		vehicle_control_mode_s vehicle_control_mode;
 
 		if (_vehicle_control_mode_sub.update(&vehicle_control_mode)) {
 			_publish_controls = vehicle_control_mode.flag_control_allocation_enabled;
 		}
 	}
+
+	preflight_check_handle_command();
 
 	// Guard against too small (< 0.2ms) and too large (> 20ms) dt's.
 	const hrt_abstime now = hrt_absolute_time();
@@ -508,6 +485,32 @@ ControlAllocator::Run()
 	}
 
 	perf_end(_loop_perf);
+}
+
+void ControlAllocator::preflight_check_handle_command()
+{
+	vehicle_command_s vehicle_command;
+
+	if (_vehicle_command_sub.update(&vehicle_command)) {
+
+		uint8_t result = vehicle_command_ack_s::VEHICLE_CMD_RESULT_ACCEPTED;
+
+		if (vehicle_command.command == vehicle_command_s::VEHICLE_CMD_DO_PREFLIGHT_CS_CHECK) {
+			if (!_armed) {
+				// currently this does not check prearmed status. if not prearmed, it will just do nothing.
+				// should we output some sort of mild warning in that case?
+
+				preflight_check_start(vehicle_command);
+				result = vehicle_command_ack_s::VEHICLE_CMD_RESULT_IN_PROGRESS;
+
+			} else {
+				result = vehicle_command_ack_s::VEHICLE_CMD_RESULT_TEMPORARILY_REJECTED;
+				PX4_INFO("Control surface preflight check rejected (armed)");
+			}
+
+			preflight_check_send_ack(result);
+		}
+	}
 }
 
 void ControlAllocator::preflight_check_start(vehicle_command_s &cmd)

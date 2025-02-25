@@ -141,6 +141,7 @@ private:
 	void publish_actuator_controls();
 
 	void preflight_check_overwrite_torque_sp(matrix::Vector<float, NUM_AXES> (&c)[ActuatorEffectiveness::MAX_NUM_MATRICES]);
+	void preflight_check_handle_command();
 	void preflight_check_update_state();
 	void preflight_check_handle_tilt_control();
 	void preflight_check_start(vehicle_command_s &cmd);
