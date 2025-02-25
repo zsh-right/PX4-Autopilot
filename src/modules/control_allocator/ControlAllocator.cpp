@@ -478,16 +478,7 @@ ControlAllocator::Run()
 			// Do allocation
 			_control_allocation[i]->allocate();
 
-			bool is_tiltrotor = _effectiveness_source_id == EffectivenessSource::TILTROTOR_VTOL;
-
-			if (_preflight_check_running && is_tiltrotor) {
-				float preflight_check_tilt_sp = preflight_check_get_tilt_control();
-				_actuator_effectiveness->setBypassTiltrotorControls(true, preflight_check_tilt_sp, 0.0f);
-
-			} else {
-				_actuator_effectiveness->setBypassTiltrotorControls(false, 0.0f, 0.0f);
-
-			}
+			preflight_check_handle_tilt_control();
 
 			_actuator_effectiveness->allocateAuxilaryControls(dt, i, _control_allocation[i]->_actuator_sp); //flaps and spoilers
 			_actuator_effectiveness->updateSetpoint(c[i], i, _control_allocation[i]->_actuator_sp,
@@ -522,6 +513,8 @@ ControlAllocator::Run()
 void ControlAllocator::preflight_check_start(vehicle_command_s &cmd)
 {
 
+	// If one is running, abort it. Depending on the use case we may prefer
+	// to instead "silently" overwrite the value.
 	if (_preflight_check_running) {
 		preflight_check_abort();
 	}
@@ -562,7 +555,6 @@ void ControlAllocator::preflight_check_abort()
 	preflight_check_send_ack(vehicle_command_ack_s::VEHICLE_CMD_RESULT_CANCELLED);
 
 }
-
 
 void ControlAllocator::preflight_check_finish()
 {
@@ -628,22 +620,33 @@ void ControlAllocator::preflight_check_overwrite_torque_sp(matrix::Vector<float,
 	}
 }
 
-float ControlAllocator::preflight_check_get_tilt_control()
+void ControlAllocator::preflight_check_handle_tilt_control()
 {
+	bool is_tiltrotor = _effectiveness_source_id == EffectivenessSource::TILTROTOR_VTOL;
 
-	int axis = _preflight_check_phase / 2;
-	int negative = _preflight_check_phase % 2;
+	if (_preflight_check_running) {
 
-	float modified_tilt_control = 0.5f;
+		if (_preflight_check_axis == vehicle_command_s::AXIS_COLLECTIVE_TILT) {
 
-	if (axis == 3) {
-		// axis 3 = tiltrotor.
-		// collective tilt normalised control goes from 0 to 1.
-		modified_tilt_control = negative ? 0.f : 1.f;
+			if (is_tiltrotor) {
+				float modified_tilt_control = math::constrain(_preflight_check_input, 0.f, 1.f);
+
+				_actuator_effectiveness->setBypassTiltrotorControls(true, modified_tilt_control, 0.0f);
+
+			} else {
+				// Commanded collective tilt axis but the vehicle is not a tiltrotor. Abort
+				_preflight_check_running = false;
+				preflight_check_send_ack(vehicle_command_ack_s::VEHICLE_CMD_RESULT_DENIED);
+
+			}
+		}
+
+	} else {
+		// strictly speaking this is only necessary if is_tiltrotor but
+		// can't hurt to call it always in case other
+		// ActuatorEffectiveness* classes implement similar things
+		_actuator_effectiveness->setBypassTiltrotorControls(false, 0.0f, 0.0f);
 	}
-
-	return modified_tilt_control;
-
 }
 
 void

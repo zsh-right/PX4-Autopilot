@@ -142,7 +142,7 @@ private:
 
 	void preflight_check_overwrite_torque_sp(matrix::Vector<float, NUM_AXES> (&c)[ActuatorEffectiveness::MAX_NUM_MATRICES]);
 	void preflight_check_update_state();
-	float preflight_check_get_tilt_control();
+	void preflight_check_handle_tilt_control();
 	void preflight_check_start(vehicle_command_s &cmd);
 	void preflight_check_send_ack(uint8_t result);
 	void preflight_check_abort();
@@ -214,8 +214,6 @@ private:
 	uint16_t _handled_motor_failure_bitmask{0};
 
 	bool _preflight_check_running{false};
-	int _preflight_check_phase{0};
-	hrt_abstime _last_preflight_check_update{0};
 
 	uint8_t _preflight_check_axis{0};
 	float _preflight_check_input{0.0f};
