@@ -194,16 +194,37 @@ void Ekf::controlGnssPosFusion(estimator_aid_source2d_s &aid_src, const bool for
 
 	} else {
 		if (starting_conditions_passing) {
-			ECL_INFO("starting GNSS position fusion");
-			_information_events.flags.starting_gps_fusion = true;
+			bool fused = false;
 
-			resetHorizontalPositionToGnss(aid_src);
-			_control_status.flags.gnss_pos = true;
+			if (_local_origin_lat_lon.isInitialized()) {
+				fused = fuseHorizontalPosition(aid_src);
+			}
+
+			bool reset = false;
+
+			if (!fused && isGnssPosResetAllowed()) {
+				resetHorizontalPositionToGnss(aid_src);
+				reset = true;
+			}
+
+			if (fused || reset) {
+				ECL_INFO("starting GNSS position fusion");
+				_information_events.flags.starting_gps_fusion = true;
+				_control_status.flags.gnss_pos = true;
+			}
 
 		} else if (gpos_init_conditions_passing && !_local_origin_lat_lon.isInitialized()) {
 			resetHorizontalPositionToGnss(aid_src);
 		}
 	}
+}
+
+bool Ekf::isGnssPosResetAllowed() const
+{
+	return ((static_cast<GnssMode>(_params.gnss_mode) == Mode::AUTO)
+		&& !ekf.isOtherSourceOfHorizontalPositionAidingThan(_control_status.flags.gnss_pos))
+	       || ((static_cast<GnssMode>(_params.gnss_mode) == Mode::DEAD_RECKONING)
+		   && !ekf.isOtherSourceOfHorizontalAidingThan(_control_status.flags.gnss_pos));
 }
 
 void Ekf::updateGnssVel(const imuSample &imu_sample, const gnssSample &gnss_sample, estimator_aid_source3d_s &aid_src)
@@ -359,8 +380,42 @@ void Ekf::resetHorizontalPositionToGnss(estimator_aid_source2d_s &aid_src)
 	resetAidSourceStatusZeroInnovation(aid_src);
 }
 
-bool Ekf::shouldResetGpsFusion() const
+bool Ekf::shouldResetGnssVel() const
 {
+	/* We are relying on aiding to constrain drift so after a specified time
+	 * with no aiding we need to do something
+	 */
+	bool has_horizontal_aiding_timed_out = isTimedOut(_time_last_hor_pos_fuse, _params.reset_timeout_max)
+					       && isTimedOut(_time_last_hor_vel_fuse, _params.reset_timeout_max);
+
+#if defined(CONFIG_EKF2_OPTICAL_FLOW)
+
+	if (has_horizontal_aiding_timed_out) {
+		// horizontal aiding hasn't timed out if optical flow still active
+		if (_control_status.flags.opt_flow && isRecent(_aid_src_optical_flow.time_last_fuse, _params.reset_timeout_max)) {
+			has_horizontal_aiding_timed_out = false;
+		}
+	}
+
+#endif // CONFIG_EKF2_OPTICAL_FLOW
+
+	const bool is_reset_required = has_horizontal_aiding_timed_out
+				       || (isTimedOut(_time_last_hor_pos_fuse, 2 * _params.reset_timeout_max)
+					   && (_params.gnss_ctrl & static_cast<int32_t>(GnssCtrl::HPOS)));
+
+	const bool is_inflight_nav_failure = _control_status.flags.in_air
+					     && isTimedOut(_time_last_hor_vel_fuse, _params.reset_timeout_max)
+					     && isTimedOut(_time_last_hor_pos_fuse, _params.reset_timeout_max)
+					     && (_time_last_hor_vel_fuse > _time_last_on_ground_us)
+					     && (_time_last_hor_pos_fuse > _time_last_on_ground_us);
+
+	return (is_reset_required || is_inflight_nav_failure);
+}
+
+bool Ekf::shouldResetGnssPos(estimator_aid_source2d_s &aid_src) const
+{
+
+	const bool is_reset_required = isTimedOut(aid_src.time_last_fuse, _params.reset_timeout_max) && isGnssPosResetAllowed();
 	/* We are relying on aiding to constrain drift so after a specified time
 	 * with no aiding we need to do something
 	 */

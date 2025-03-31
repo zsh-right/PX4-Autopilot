@@ -148,6 +148,11 @@ enum class GnssCtrl : uint8_t {
 	YAW  = (1 << 3)
 };
 
+enum class GnssMode : uint8_t {
+	AUTO           = 0,   	///< Reset on fusion timeout if no other source of position is available
+	DEAD_RECKONING = 1   	///< Reset on fusion timeout if no source of velocity is availabl
+};
+
 enum class RngCtrl : uint8_t {
 	DISABLED    = 0,
 	CONDITIONAL = 1,
@@ -322,6 +327,7 @@ struct parameters {
 
 #if defined(CONFIG_EKF2_GNSS)
 	int32_t gnss_ctrl {static_cast<int32_t>(GnssCtrl::HPOS) | static_cast<int32_t>(GnssCtrl::VEL)};
+	int32_t gnss_mode {static_cast<int32_t>(GnssMode::AUTO)};
 	float gps_delay_ms{110.0f};             ///< GPS measurement delay relative to the IMU (mSec)
 
 	Vector3f gps_pos_body{};                ///< xyz position of the GPS antenna in body frame (m)
