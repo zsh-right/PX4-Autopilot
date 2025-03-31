@@ -870,12 +870,12 @@ private:
 	void stopGnssPosFusion();
 	void updateGnssVel(const imuSample &imu_sample, const gnssSample &gnss_sample, estimator_aid_source3d_s &aid_src);
 	void updateGnssPos(const gnssSample &gnss_sample, estimator_aid_source2d_s &aid_src);
-	bool isGnssPosResetAllowed() const
+	bool isGnssVelResetAllowed() const;
+	bool isGnssPosResetAllowed() const;
 	void controlGnssYawEstimator(estimator_aid_source3d_s &aid_src_vel);
 	bool tryYawEmergencyReset();
 	void resetVelocityToGnss(estimator_aid_source3d_s &aid_src);
 	void resetHorizontalPositionToGnss(estimator_aid_source2d_s &aid_src);
-	bool shouldResetGpsFusion() const;
 
 	/*
 	 * Return true if the GPS solution quality is adequate.
