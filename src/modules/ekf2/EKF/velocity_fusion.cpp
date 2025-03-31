@@ -83,14 +83,13 @@ void Ekf::resetHorizontalVelocityTo(const Vector2f &new_horz_vel, const Vector2f
 
 	if (PX4_ISFINITE(new_horz_vel_var(0))) {
 		P.uncorrelateCovarianceSetVariance<1>(State::vel.idx, math::max(sq(0.01f), new_horz_vel_var(0)));
+		P.uncorrelateCovarianceSetVariance<1>(State::pos.idx, P(State::pos.idx, State::pos.idx));
 	}
 
 	if (PX4_ISFINITE(new_horz_vel_var(1))) {
 		P.uncorrelateCovarianceSetVariance<1>(State::vel.idx + 1, math::max(sq(0.01f), new_horz_vel_var(1)));
+		P.uncorrelateCovarianceSetVariance<1>(State::pos.idx + 1, P(State::pos.idx + 1, State::pos.idx + 1));
 	}
-
-	P.uncorrelateCovarianceSetVariance<1>(State::pos.idx, P(State::pos.idx, State::pos.idx));
-	P.uncorrelateCovarianceSetVariance<1>(State::pos.idx + 1, P(State::pos.idx + 1, State::pos.idx + 1));
 
 	_output_predictor.resetHorizontalVelocityTo(delta_horz_vel);
 
