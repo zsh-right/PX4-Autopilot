@@ -228,7 +228,7 @@ void Ekf::controlGnssPosFusion(estimator_aid_source2d_s &aid_src, const bool for
 bool Ekf::isGnssVelResetAllowed() const
 {
 	return ((static_cast<GnssMode>(_params.gnss_mode) == GnssMode::AUTO)
-		&& ((!isOtherSourceOfHorizontalAidingThan(_control_status.flags.gnss_vel)
+		&& ((!isOtherSourceOfHorizontalVelocityAidingThan(_control_status.flags.gnss_vel)
 		     || _control_status.flags.wind_dead_reckoning)))
 	       || ((static_cast<GnssMode>(_params.gnss_mode) == GnssMode::DEAD_RECKONING)
 		   && !isOtherSourceOfHorizontalAidingThan(_control_status.flags.gnss_vel));
