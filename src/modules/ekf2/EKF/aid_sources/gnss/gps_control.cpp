@@ -134,7 +134,7 @@ void Ekf::controlGnssVelFusion(estimator_aid_source3d_s &aid_src, const bool for
 			const bool fusion_timeout = isTimedOut(aid_src.time_last_fuse, _params.reset_timeout_max);
 
 			if (fusion_timeout || force_reset) {
-				if (isGnssVelResetAllowed()) {
+				if (isGnssVelResetAllowed() || force_reset) {
 					ECL_WARN("GNSS fusion timeout, resetting");
 					resetVelocityToGnss(aid_src);
 
@@ -149,19 +149,26 @@ void Ekf::controlGnssVelFusion(estimator_aid_source3d_s &aid_src, const bool for
 
 	} else {
 		if (starting_conditions_passing) {
-			ECL_INFO("starting GNSS velocity fusion");
-			_information_events.flags.starting_gps_fusion = true;
+			bool fused = false;
 
-			// when already using another velocity source velocity reset is not necessary
-			if (!isHorizontalAidingActive()
-			    || isTimedOut(_time_last_hor_vel_fuse, _params.reset_timeout_max)
-			    || !_control_status_prev.flags.yaw_align
-			   ) {
-				// reset velocity
-				resetVelocityToGnss(aid_src);
+			const bool do_reset = force_reset || !_control_status_prev.flags.yaw_align;
+
+			if (!do_reset) {
+				fused = fuseVelocity(aid_src);
 			}
 
-			_control_status.flags.gnss_vel = true;
+			bool reset = false;
+
+			if (!fused && (isGnssVelResetAllowed() || force_reset)) {
+				resetVelocityToGnss(aid_src);
+				reset = true;
+			}
+
+			if (fused || reset) {
+				ECL_INFO("starting GNSS velocity fusion");
+				_information_events.flags.starting_gps_fusion = true;
+				_control_status.flags.gnss_vel = true;
+			}
 		}
 	}
 }
