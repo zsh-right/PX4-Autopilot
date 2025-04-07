@@ -105,7 +105,7 @@ void Ekf::controlGpsFusion(const imuSample &imu_delayed)
 
 		bool do_vel_pos_reset = false;
 
-		if (_control_status.flags.gnss_vel || _control_status.flags.gnss_pos) {
+		if (!_control_status.flags.gnss_vel_fault && (_control_status.flags.gnss_vel || _control_status.flags.gnss_pos)) {
 
 			if (_control_status.flags.in_air
 			    && isYawFailure()
@@ -140,6 +140,7 @@ void Ekf::controlGnssVelFusion(estimator_aid_source3d_s &aid_src, const bool for
 
 				} else {
 					stopGnssVelFusion();
+					_control_status.flags.gnss_vel_fault = true;
 				}
 			}
 
@@ -234,11 +235,25 @@ void Ekf::controlGnssPosFusion(estimator_aid_source2d_s &aid_src, const bool for
 
 bool Ekf::isGnssVelResetAllowed() const
 {
-	return ((static_cast<GnssMode>(_params.gnss_mode) == GnssMode::AUTO)
-		&& ((!isOtherSourceOfHorizontalVelocityAidingThan(_control_status.flags.gnss_vel)
-		     || _control_status.flags.wind_dead_reckoning)))
-	       || ((static_cast<GnssMode>(_params.gnss_mode) == GnssMode::DEAD_RECKONING)
-		   && !isOtherSourceOfHorizontalAidingThan(_control_status.flags.gnss_vel));
+	bool allowed = !_control_status.flags.gnss_vel_fault;
+	
+	switch (static_cast<GnssMode>(_params.gnss_mode)) {
+	case GnssMode::AUTO:
+		if (isOtherSourceOfHorizontalVelocityAidingThan(_control_status.flags.gnss_vel)
+		    && !_control_status.flags.wind_dead_reckoning) {
+			allowed = false;
+		}
+
+		break;
+	case GnssMode::DEAD_RECKONING:
+		if (isOtherSourceOfHorizontalAidingThan(_control_status.flags.gnss_vel)) {
+			allowed = false;
+		}
+
+		break;
+	}
+
+	return allowed;
 }
 
 bool Ekf::isGnssPosResetAllowed() const

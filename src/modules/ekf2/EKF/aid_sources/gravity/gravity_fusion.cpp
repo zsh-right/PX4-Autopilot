@@ -49,7 +49,7 @@
 void Ekf::controlGravityFusion(const imuSample &imu)
 {
 	// get raw accelerometer reading at delayed horizon and expected measurement noise (gaussian)
-	const Vector3f measurement = Vector3f(imu.delta_vel / imu.delta_vel_dt - _state.accel_bias).unit();
+	const Vector3f measurement = Vector3f(imu.delta_vel / imu.delta_vel_dt).unit();
 	const float measurement_var = math::max(sq(_params.gravity_noise), sq(0.01f));
 
 	const float upper_accel_limit = CONSTANTS_ONE_G * 1.1f;
@@ -86,7 +86,7 @@ void Ekf::controlGravityFusion(const imuSample &imu)
 
 		} else if (index == 1) {
 			// recalculate innovation variance because state covariances have changed due to previous fusion (linearise using the same initial state for all axes)
-			sym::ComputeGravityYInnovVarAndH(state_vector, P, measurement_var, &_aid_src_gravity.innovation_variance[index], &H);
+			sym::ComputeGravityYInnovVarAndH(_state.vector(), P, measurement_var, &_aid_src_gravity.innovation_variance[index], &H);
 
 			// recalculate innovation using the updated state
 			_aid_src_gravity.innovation[index] = _state.quat_nominal.rotateVectorInverse(Vector3f(0.f, 0.f,
@@ -94,7 +94,7 @@ void Ekf::controlGravityFusion(const imuSample &imu)
 
 		} else if (index == 2) {
 			// recalculate innovation variance because state covariances have changed due to previous fusion (linearise using the same initial state for all axes)
-			sym::ComputeGravityZInnovVarAndH(state_vector, P, measurement_var, &_aid_src_gravity.innovation_variance[index], &H);
+			sym::ComputeGravityZInnovVarAndH(_state.vector(), P, measurement_var, &_aid_src_gravity.innovation_variance[index], &H);
 
 			// recalculate innovation using the updated state
 			_aid_src_gravity.innovation[index] = _state.quat_nominal.rotateVectorInverse(Vector3f(0.f, 0.f,

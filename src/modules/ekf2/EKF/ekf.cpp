@@ -330,7 +330,7 @@ bool Ekf::resetGlobalPosToExternalObservation(const double latitude, const doubl
 		const Vector2f innov = (_gpos - gpos_corrected).xy();
 		const Vector2f innov_var = Vector2f(getStateVariance<State::pos>()) + obs_var;
 
-		const float sq_gate = sq(5.f); // magic hardcoded gate
+		const float sq_gate = sq(1.f); // magic hardcoded gate
 		const float test_ratio = sq(innov(0)) / (sq_gate * innov_var(0)) + sq(innov(1)) / (sq_gate * innov_var(1));
 
 		const bool innov_rejected = (test_ratio > 1.f);
