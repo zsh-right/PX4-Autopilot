@@ -37,6 +37,7 @@
 
 #include <drivers/drv_hrt.h>
 #include <lib/mathlib/mathlib.h>
+#include <lib/mathlib/math/filter/LowPassFilter2p.hpp>
 #include <lib/parameters/param.h>
 #include <lib/perf/perf_counter.h>
 #include <lib/slew_rate/SlewRate.hpp>
@@ -67,6 +68,7 @@
 #include <uORB/topics/vehicle_rates_setpoint.h>
 #include <uORB/topics/vehicle_status.h>
 #include <uORB/topics/vehicle_local_position.h>
+#include <uORB/topics/vehicle_attitude.h>
 #include <uORB/topics/trajectory_setpoint.h>
 
 using matrix::Eulerf;
@@ -97,6 +99,9 @@ public:
 private:
 	void Run() override;
 
+
+	matrix::Quatf get_flat_attitude(matrix::Vector3f vel, matrix::Vector3f f);
+
 	matrix::Vector3f computeIndi(matrix::Vector3f pos_ref, matrix::Vector3f vel_ref, matrix::Vector3f acc_ref);
 
 
@@ -111,6 +116,7 @@ private:
 	uORB::Subscription _vehicle_rates_sub{ORB_ID(vehicle_angular_velocity)};
 	uORB::Subscription _vehicle_local_position_sub{ORB_ID(vehicle_local_position)};
 	uORB::Subscription _trajectory_setpoint_sub{ORB_ID(trajectory_setpoint)};
+	uORB::Subscription _vehicle_attitude_sub{ORB_ID(vehicle_attitude)};
 
 	uORB::SubscriptionMultiArray<control_allocator_status_s, 2> _control_allocator_status_subs{ORB_ID::control_allocator_status};
 
@@ -127,10 +133,30 @@ private:
 
 	hrt_abstime _last_run{0};
 
+	// controller frequency
+	const float _sample_frequency = 200.f;
+	// Low-Pass filters stage 1
+	const float _cutoff_frequency_1 = 20.f;
+	// smoothing filter to reject HF noise in control output
+	const float _cutoff_frequency_smoothing =
+		20.f; // we want to attenuate noise at 30Hz with -10dB -> need cutoff frequency 5 times lower (6Hz)
+	math::LowPassFilter2p<float> _lp_filter_accel[3] {{_sample_frequency, _cutoff_frequency_1}, {_sample_frequency, _cutoff_frequency_1}, {_sample_frequency, _cutoff_frequency_1}};	// linear acceleration
+	math::LowPassFilter2p<float> _lp_filter_force[3] {{_sample_frequency, _cutoff_frequency_1}, {_sample_frequency, _cutoff_frequency_1}, {_sample_frequency, _cutoff_frequency_1}};	// force command
+	math::LowPassFilter2p<float> _lp_filter_omega[3] {{_sample_frequency, _cutoff_frequency_1}, {_sample_frequency, _cutoff_frequency_1}, {_sample_frequency, _cutoff_frequency_1}};	// body rates
+	math::LowPassFilter2p<float> _lp_filter_ctrl0[3] {{_sample_frequency, _cutoff_frequency_smoothing}, {_sample_frequency, _cutoff_frequency_smoothing}, {_sample_frequency, _cutoff_frequency_smoothing}};	// force command stage 1
+
+
 	matrix::Vector3f vehicle_position_;
 	matrix::Vector3f vehicle_velocity_;
+	matrix::Vector3f wind_estimate_;
+	matrix::Quatf vehicle_attitude_;
+	matrix::Vector3f pos_ref_;
+	matrix::Vector3f vel_ref_;
+	matrix::Vector3f acc_ref_;
+
 
 	bool _landed{true};
+	bool _switch_saturation{true};
 
 	// DEFINE_PARAMETERS(
 	// 	(ParamFloat<px4::params::FW_ACRO_X_MAX>) _param_fw_acro_x_max,
@@ -193,4 +219,5 @@ private:
 	int		parameters_update();
 
 	void 		vehicle_local_position_poll();
+	void		vehicle_attitude_poll();
 };

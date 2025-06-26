@@ -72,6 +72,18 @@ FixedwingIndiPosControl::parameters_update()
 }
 
 void
+FixedwingIndiPosControl::vehicle_attitude_poll()
+{
+	vehicle_attitude_s vehicle_attitude;
+
+	if (_vehicle_attitude_sub.update(&vehicle_attitude)) {
+		vehicle_attitude_ = Quatf(vehicle_attitude.q);
+	}
+
+}
+
+
+void
 FixedwingIndiPosControl::vehicle_local_position_poll()
 {
 	vehicle_local_position_s pos;
@@ -83,17 +95,81 @@ FixedwingIndiPosControl::vehicle_local_position_poll()
 	}
 }
 
+Quatf
+FixedwingIndiPosControl::get_flat_attitude(Vector3f vel, Vector3f f)
+{
+
+	Vector3f vel_air = vel - wind_estimate_;
+	// compute force component projected onto lift axis
+	Vector3f vel_normalized = vel_air.normalized();
+	Vector3f f_lift = f - (f * vel_normalized) * vel_normalized;
+	Vector3f lift_normalized = f_lift.normalized();
+	Vector3f wing_normalized = -vel_normalized.cross(lift_normalized);
+	// compute rotation matrix between ENU and FRD frame
+	Dcmf R_bi;
+	R_bi(0, 0) = vel_normalized(0);
+	R_bi(0, 1) = vel_normalized(1);
+	R_bi(0, 2) = vel_normalized(2);
+	R_bi(1, 0) = wing_normalized(0);
+	R_bi(1, 1) = wing_normalized(1);
+	R_bi(1, 2) = wing_normalized(2);
+	R_bi(2, 0) = lift_normalized(0);
+	R_bi(2, 1) = lift_normalized(1);
+	R_bi(2, 2) = lift_normalized(2);
+	R_bi.renormalize();
+
+	///TODO:
+	float rho_corrected{1.0};
+	float _stall_speed{1.0};
+	float _rho{1.0};
+	float _cal_airspeed{1.0};
+	float _true_airspeed{1.0};
+	float _area{1.0};
+
+	if (_cal_airspeed >= _stall_speed) {
+		rho_corrected = _rho * powf(_cal_airspeed / _true_airspeed, 2);
+
+	} else {
+		rho_corrected = _rho;
+	}
+
+	// compute required AoA
+	Vector3f f_phi = R_bi * f_lift;
+	float _C_L0{0.1};
+	float _C_L1{0.1};
+	float _aoa_offset{0.1};
+	float AoA = ((2.f * f_phi(2)) / (rho_corrected * _area * (vel_air * vel_air) + 0.001f) - _C_L0) / _C_L1 - _aoa_offset;
+	// compute final rotation matrix
+	Eulerf e(0.f, AoA, 0.f);
+	Dcmf R_pitch(e);
+	Dcmf Rotation(R_pitch * R_bi);
+	// switch from FRD to ENU frame
+	Rotation(1, 0) *= -1.f;
+	Rotation(1, 1) *= -1.f;
+	Rotation(1, 2) *= -1.f;
+	Rotation(2, 0) *= -1.f;
+	Rotation(2, 1) *= -1.f;
+	Rotation(2, 2) *= -1.f;
+
+	Quatf q(Rotation.transpose());
+	return q;
+}
+
 Vector3f
 FixedwingIndiPosControl::computeIndi(Vector3f pos_ref, Vector3f vel_ref, Vector3f acc_ref)
 {
-//     Dcmf R_ib(_att);
-//     Dcmf R_bi(R_ib.transpose());
-//     // apply LP filter to acceleration & velocity
-//     Vector3f acc_filtered;
-//     acc_filtered(0) = _lp_filter_accel[0].apply(_acc(0));
-//     acc_filtered(1) = _lp_filter_accel[1].apply(_acc(1));
-//     acc_filtered(2) = _lp_filter_accel[2].apply(_acc(2));
-//     Vector3f omega_filtered;
+	Dcmf R_ib(vehicle_attitude_);
+	Dcmf R_bi(R_ib.transpose());
+
+	// apply LP filter to acceleration & velocity
+	Vector3f acc_filtered;
+	///TODO: Poll acceleration
+	Vector3f _acc;
+	acc_filtered(0) = _lp_filter_accel[0].apply(_acc(0));
+	acc_filtered(1) = _lp_filter_accel[1].apply(_acc(1));
+	acc_filtered(2) = _lp_filter_accel[2].apply(_acc(2));
+
+	//     Vector3f omega_filtered;
 //     omega_filtered(0) = _lp_filter_omega[0].apply(_omega(0));
 //     omega_filtered(1) = _lp_filter_omega[1].apply(_omega(1));
 //     omega_filtered(2) = _lp_filter_omega[2].apply(_omega(2));
@@ -101,91 +177,117 @@ FixedwingIndiPosControl::computeIndi(Vector3f pos_ref, Vector3f vel_ref, Vector3
 	// =========================================
 	// apply PD control law on the body position
 	// =========================================
-//     Vector3f acc_command = R_ib*(_K_x*R_bi*(pos_ref-_pos) + _K_v*R_bi*(vel_ref-_vel) + _K_a*R_bi*(acc_ref-_acc)) + acc_ref;
+	float _K_x{1.0};
+	float _K_v{1.0};
+	float _K_a{1.0};
+	Vector3f acc_command_local = (_K_x * R_bi * (pos_ref - vehicle_position_) + _K_v * R_bi *
+				      (vel_ref - vehicle_velocity_) + _K_a * R_bi *
+				      (acc_ref - _acc));
+	Vector3f acc_command = R_ib * acc_command_local + acc_ref; ///TODO: Why add acc_ref again?
 
 	// ==================================
 	// compute expected aerodynamic force
 	// ==================================
-//     Vector3f f_current;
-//     Vector3f vel_body = R_bi*(_vel - _wind_estimate);
-//     float AoA = atan2f(vel_body(2), vel_body(0)) + _aoa_offset;
-//     float C_l = _C_L0 + _C_L1*AoA;
-//     float C_d = _C_D0 + _C_D1*AoA + _C_D2*powf(AoA,2);
-//     // compute actual air density
-//     float rho_corrected;
+	Vector3f _wind_estimate;
+	Vector3f airvel_body = R_bi * (vehicle_velocity_ - _wind_estimate);
+
+	// Vehicle parameters
+	float _aoa_offset{0.0};
+	float _C_L0{0.1};
+	float _C_D0{0.1};
+	float _C_L1{0.1};
+	float _C_D1{0.1};
+	float _C_D2{0.1};
+	float _area{1.0};
+
+	float angle_of_attack = atan2f(airvel_body(2), airvel_body(0)) + _aoa_offset;
+
+	float C_l = _C_L0 + _C_L1 * angle_of_attack;
+	float C_d = _C_D0 + _C_D1 * angle_of_attack + _C_D2 * powf(angle_of_attack, 2);
+	// compute actual air density
+	float rho_corrected{1.0};
 //     if (_cal_airspeed>=_stall_speed) {
 //         rho_corrected = _rho*powf(_cal_airspeed/_true_airspeed, 2);
 //     }
 //     else {
 //         rho_corrected = _rho;
 //     }
-//     float factor = -0.5f*rho_corrected*_area*sqrtf(vel_body*vel_body);
-//     Vector3f w_x = vel_body;
-//     Vector3f w_z = w_x.cross(Vector3f{0.f,1.f,0.f});
-//     f_current = R_ib*(factor*(C_l*w_z + C_d*w_x));
+	float factor = -0.5f * rho_corrected * _area * sqrtf(airvel_body * airvel_body);
+
+	// Wind axis
+	Vector3f w_x = airvel_body;
+	Vector3f w_z = w_x.cross(Vector3f{0.f, 1.f, 0.f});
+	Vector3f f_current = R_ib * (factor * (C_l * w_z + C_d * w_x));
 //     // apply LP filter to force
-//     Vector3f f_current_filtered;
-//     f_current_filtered(0) = _lp_filter_force[0].apply(f_current(0));
-//     f_current_filtered(1) = _lp_filter_force[1].apply(f_current(1));
-//     f_current_filtered(2) = _lp_filter_force[2].apply(f_current(2));
+	Vector3f f_current_filtered;
+	f_current_filtered(0) = _lp_filter_force[0].apply(f_current(0));
+	f_current_filtered(1) = _lp_filter_force[1].apply(f_current(1));
+	f_current_filtered(2) = _lp_filter_force[2].apply(f_current(2));
 
 	// ================================
 	// get force command in world frame
 	// ================================
-//     Vector3f f_command = _mass*(acc_command - acc_filtered) + f_current_filtered;
+	float _mass{1.0};
+	Vector3f f_command = _mass * (acc_command - acc_filtered) + f_current_filtered;
 
 	// ============================================================================================================
 	// apply some filtering to the force command. This introduces some time delay,
 	// which is not desired for stability reasons, but it rejects some of the noise fed to the low-level controller
 	// ============================================================================================================
-//     f_command(0) = _lp_filter_ctrl0[0].apply(f_command(0));
-//     f_command(1) = _lp_filter_ctrl0[1].apply(f_command(1));
-//     f_command(2) = _lp_filter_ctrl0[2].apply(f_command(2));
+	f_command(0) = _lp_filter_ctrl0[0].apply(f_command(0));
+	f_command(1) = _lp_filter_ctrl0[1].apply(f_command(1));
+	f_command(2) = _lp_filter_ctrl0[2].apply(f_command(2));
 //     _f_command = f_command;
 	// limit maximum lift force by the maximum lift force, the aircraft can produce (assume max force at 15° aoa)
 
 	// ====================================================================
 	// saturate force command to avoid overly agressive maneuvers and stall
 	// ====================================================================
-//     if (_switch_saturation){
-//         float speed = vel_body*vel_body;
+	if (_switch_saturation) {
+		float speed = airvel_body * airvel_body;
 //         // compute maximum achievable force
-//         float f_max;
-//         if (speed>_stall_speed){
-//             f_max = -factor*sqrtf(vel_body*vel_body)*(_C_L0 + _C_L1*0.25f); // assume stall at 15° AoA
-//         }
-//         else {
-//             f_max = -factor*_stall_speed*(_C_L0 + _C_L1*0.25f); // assume stall at 15° AoA
-//         }
-//         // compute current command
-//         float f_now = sqrtf(f_command*f_command);
-//         // saturate current command
-//         if (f_now>f_max){
-//             f_command = f_max/f_now * f_command;
-//         }
-//     }
+		float f_max{1.0};
+		float _stall_speed{1.0};
+
+		if (speed > _stall_speed) {
+			f_max = -factor * sqrtf(airvel_body * airvel_body) * (_C_L0 + _C_L1 * 0.25f); // assume stall at 15° AoA
+
+		} else {
+			f_max = -factor * _stall_speed * (_C_L0 + _C_L1 * 0.25f); // assume stall at 15° AoA
+		}
+
+		// compute current command
+		float f_now = sqrtf(f_command * f_command);
+
+		// saturate current command
+		if (f_now > f_max) {
+			f_command = f_max / f_now * f_command;
+		}
+	}
 
 	// ==========================================================================
 	// get required attitude (assuming we can fly the target velocity), and error
 	// ==========================================================================
-//     Dcmf R_ref(_get_attitude(vel_ref,f_command));
-//     // get attitude error
-//     Dcmf R_ref_true(R_ref.transpose()*R_ib);
-//     // get required rotation vector (in body frame)
-//     AxisAnglef q_err(R_ref_true);
-//     Vector3f w_err;
-//     // project rotation angle to [-pi,pi]
-//     if (q_err.angle()*q_err.angle()<M_PI_F*M_PI_F){
-//         w_err = -q_err.angle()*q_err.axis();
-//     }
-//     else{
-//         if (q_err.angle()>0.f){
-//             w_err = (2.f*M_PI_F-(float)fmod(q_err.angle(),2.f*M_PI_F))*q_err.axis();
-//         }
-//         else{
-//             w_err = (-2.f*M_PI_F-(float)fmod(q_err.angle(),2.f*M_PI_F))*q_err.axis();
-//         }
-//     }
+	Dcmf R_ref(get_flat_attitude(vel_ref, f_command));
+	// get attitude error
+	Dcmf R_ref_true(R_ref.transpose()*R_ib);
+	// get required rotation vector (in body frame)
+	AxisAnglef q_err(R_ref_true);
+	Vector3f w_err;
+
+	// project rotation angle to [-pi,pi]
+	if (q_err.angle()*q_err.angle() < M_PI_F * M_PI_F) {
+		w_err = -q_err.angle() * q_err.axis();
+
+	} else {
+		if (q_err.angle() > 0.f) {
+			w_err = (2.f * M_PI_F - (float)fmod(q_err.angle(), 2.f * M_PI_F)) * q_err.axis();
+
+		} else {
+			w_err = (-2.f * M_PI_F - (float)fmod(q_err.angle(), 2.f * M_PI_F)) * q_err.axis();
+		}
+	}
+
 	// TODO: Reference rate to rate controller
 	// =========================================
 	// apply PD control law on the body attitude
@@ -293,21 +395,29 @@ void FixedwingIndiPosControl::Run()
 			parameters_update();
 		}
 
-		///TODO: poll local position
+		// Poll local position
 		vehicle_local_position_poll();
 
-		///TODO: poll trajectory setpoints
+		// Poll trajectory setpoints
+		trajectory_setpoint_s trajectory_setpoint;
 
-		///TODO: Compute bodyrate commands
-		Vector3f pos_ref;
-		Vector3f vel_ref;
-		Vector3f acc_ref;
-		Vector3f rate_command = computeIndi(pos_ref, vel_ref, acc_ref);
+		if (_trajectory_setpoint_sub.update(&trajectory_setpoint)) {
+			///TODO: Check if references are invalid
+			pos_ref_ = Vector3f(trajectory_setpoint.position);
+			vel_ref_ = Vector3f(trajectory_setpoint.velocity);
+			acc_ref_ = Vector3f(trajectory_setpoint.acceleration);
+		}
+
+		// Compute bodyrate commands
+		Vector3f rate_command = computeIndi(pos_ref_, vel_ref_, acc_ref_);
 		rate_command(0) = rate_command(0);
 
-		///TODO: Publish bodyrate commands in offboard mode
 
 		///TODO: Publish offboard mode
+
+		///TODO: Publish bodyrate commands in offboard mode
+		// if (_control_mode.flag_control_offboard_enabled) {
+		// }
 
 	}
 
