@@ -115,6 +115,7 @@ px4_add_romfs_files(
 	17002_flightgear_tf-g2
 
 	50000_gz_rover_differential
+	50001_gz_rover_skid
 
 	71002_gz_spacecraft_2d
 
