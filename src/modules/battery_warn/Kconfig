@@ -1,0 +1,12 @@
+menuconfig MODULES_BATTERY_WARN
+    bool "Battery Warning Module"
+    default n
+    ---help---
+        Monitors battery level and warns when it drops below threshold.
+
+menuconfig USER_BATTERY_WARN
+    bool "Battery Warn running as userspace module"
+    default y
+    depends on BOARD_PROTECTED && MODULES_BATTERY_WARN
+    ---help---
+        Place battery_warn in userspace memory

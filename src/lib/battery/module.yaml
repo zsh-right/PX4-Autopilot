@@ -135,6 +135,24 @@ parameters:
             increment: 0.01
             default: 0.15
 
+        BAT_WARN_THR:
+            description:
+                short: Warning threshold.
+                long: |
+                    Sets the threshold when the battery will be reported as low.
+                    This should be higher than critical threshold (BAT_CRIT_THR).
+                    When battery level drops below this value:
+                    - MAVLink warnings will be sent
+                    - Audio alerts will be triggered (if enabled)
+                    - Optional visual indicators activated
+            type: float
+            unit: norm
+            min: 0.12
+            max: 0.5
+            decimal: 2
+            increment: 0.01
+            default: 0.15
+
         BAT_CRIT_THR:
             description:
                 short: Critical threshold.
