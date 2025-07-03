@@ -49,12 +49,12 @@ def analyze_vertical_flight(log_path):
 
     # 从这里开始继续你的分析代码...
     # 转换坐标系
-    df['true_altitude'] = -df['ekf_pos_z']
-    df['ekf_velocity_up'] = -df['ekf_vel_z']
+    df['true_altitude'] = df['ekf_pos_z']
+    df['ekf_velocity_up'] = df['ekf_vel_z']
 
     # 气压高度转换（简化模型）
-    sea_level_pressure = 101325.0
-    df['baro_altitude'] = (sea_level_pressure - df['baro_pressure']) * (800.0 / sea_level_pressure)
+    sea_level_pressure = 101.325
+    df['baro_altitude'] = (sea_level_pressure - df['baro_pressure']) * (8000.0 / sea_level_pressure)
 
     # 创建基本图表
     plt.figure(figsize=(12, 8))
@@ -64,7 +64,7 @@ def analyze_vertical_flight(log_path):
     plt.plot(df['timestamp'], df['true_altitude'], 'b-', label='EKF Altitude')
     if 'gps_alt' in df:
         plt.plot(df['timestamp'], df['gps_alt'], 'r--', label='GPS Altitude')
-    plt.plot(df['timestamp'], df['baro_altitude'], 'g-.', label='Baro Altitude')
+    # plt.plot(df['timestamp'], df['baro_altitude'], 'g-.', label='Baro Altitude')
     plt.ylabel('Altitude (m)')
     plt.legend()
     plt.grid(True)

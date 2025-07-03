@@ -1,8 +1,11 @@
 #include <gtest/gtest.h>
+#include <iostream>
 #include "EKF/ekf.h"
 #include "sensor_simulator/sensor_simulator.h"
 #include "sensor_simulator/ekf_wrapper.h"
 #include "test_helper/reset_logging_checker.h"
+
+using namespace std;
 
 class EkfGpsTest : public ::testing::Test
 {
@@ -39,157 +42,125 @@ public:
 
 TEST_F(EkfGpsTest, VerticalTakeoffLanding)
 {
-    // 确保GPS融合已启用
     EXPECT_TRUE(_ekf_wrapper.isIntendingGpsFusion());
-
-    // 创建数据记录文件
     std::ofstream log_file("gps_test_vertical.csv");
     log_file << "timestamp,baro_pressure,gps_alt,gps_fix_type,gps_num_sats,imu_accel_z,ekf_pos_z,ekf_vel_z\n";
-
-    // 设置初始状态（地面）
     _ekf->set_in_air_status(false);
     _ekf->set_vehicle_at_rest(true);
-
-    // 记录初始状态
     uint64_t start_time = _sensor_simulator.getTime();
 
-    // === 第1阶段：垂直起飞 ===
-    const float climb_speed = 2.0f; // 爬升速度 2m/s
-    const float climb_duration = 5.0f; // 爬升持续 5秒
+
+    float climb_speed = 2.0f;
+    const float climb_duration = 5.0f;
     float current_altitude = 0.0f;
-    const float sea_level_pressure = 101325.0f; // 海平面气压(Pa)
+    const float sea_level_pressure = 101.325;
 
     log_file << "# === TAKEOFF PHASE ===\n";
     for (float t = 0; t < climb_duration; t += 0.1f) {
-        // 模拟垂直运动（向上）
         current_altitude += climb_speed * 0.1f;
 
-        // 更新传感器数据 - 完全匹配类接口
-        // 气压计：高度增加，气压降低（每8米降低1%）
-        float baro_pressure = sea_level_pressure * (1 - current_altitude / 800.0f);
+        float baro_pressure = sea_level_pressure * (1 - _sensor_simulator._gps.getData().alt / 8000.0f);
         _sensor_simulator._baro.setData(baro_pressure);
 
-        // GPS：设置高度和速度
-        _sensor_simulator._gps.setAltitude(current_altitude);
+        _sensor_simulator._gps.setAltitude(_sensor_simulator._gps.getDefaultGpsData().alt + current_altitude);
         _sensor_simulator._gps.setVelocity(Vector3f(0, 0, -climb_speed)); // NED下速度向上为负
 
-        // IMU：模拟爬升加速度（减去部分重力）
-        const float upward_accel = climb_speed * 0.5f;
+        float upward_accel = 1;
         _sensor_simulator._imu.setData(
-            Vector3f(0, 0, CONSTANTS_ONE_G - upward_accel), // 加速度
-            Vector3f(0, 0, 0) // 陀螺仪
+            Vector3f(0, 0, -CONSTANTS_ONE_G - upward_accel),
+            Vector3f(0, 0, 0)
         );
-
-        // 运行100ms
+        climb_speed += upward_accel * 0.1f;
         _sensor_simulator.runSeconds(0.1f);
 
-        // 获取当前状态 - 直接从传感器读取
         float baro_pressure_current = _sensor_simulator._baro.getData();
         float gps_alt_current = _sensor_simulator._gps.getData().alt; // 获取GPS高度
         int gps_fix_type = _sensor_simulator._gps.getData().fix_type;
         int gps_num_sats = _sensor_simulator._gps.getData().nsats;
 
-        // 获取EKF状态 - 使用实际存在的方法
         Vector3f ekf_position = _ekf->getPosition();
         Vector3f ekf_velocity = _ekf->getVelocity();
 
-        // 记录数据
+
         log_file << _sensor_simulator.getTime() - start_time << ","
                  << baro_pressure_current << ","
                  << gps_alt_current << ","
                  << gps_fix_type << ","
                  << gps_num_sats << ","
-                 << CONSTANTS_ONE_G - upward_accel << "," // 使用模拟值而非查询
-                 << ekf_position(2) << ","
+                 << CONSTANTS_ONE_G - upward_accel << ","
+                 << -(ekf_position(2)) + _sensor_simulator._gps.getDefaultGpsData().alt << ","
                  << ekf_velocity(2) << "\n";
     }
 
-    // === 第2阶段：空中悬停 ===
-    const float hover_duration = 10.0f; // 悬停10秒
+    const float hover_duration = 10.0f;
 
     log_file << "# === HOVER PHASE ===\n";
     for (float t = 0; t < hover_duration; t += 0.1f) {
-        // 更新传感器数据 - 保持当前状态
         _sensor_simulator._imu.setData(
-            Vector3f(0, 0, CONSTANTS_ONE_G), // 仅重力加速度
-            Vector3f(0, 0, 0) // 无旋转
-        );
-
-        // GPS：保持速度为零
-        _sensor_simulator._gps.setVelocity(Vector3f(0, 0, 0));
-
-        // 运行100ms
-        _sensor_simulator.runSeconds(0.1f);
-
-        // 获取当前状态
-        float baro_pressure_current = _sensor_simulator._baro.getData();
-        float gps_alt_current = _sensor_simulator._gps.getData().alt;
-
-        // 获取EKF状态
-        Vector3f ekf_position = _ekf->getPosition();
-        Vector3f ekf_velocity = _ekf->getVelocity();
-
-        // 记录数据
-        log_file << _sensor_simulator.getTime() - start_time << ","
-                 << baro_pressure_current << ","
-                 << gps_alt_current << ","
-                 << _sensor_simulator._gps.getData().fix_type << ","
-                 << _sensor_simulator._gps.getData().nsats << ","
-                 << CONSTANTS_ONE_G << "," // 模拟重力加速度
-                 << ekf_position(2) << ","
-                 << ekf_velocity(2) << "\n";
-    }
-
-    // === 第3阶段：垂直降落 ===
-    const float descend_speed = 1.0f; // 降落速度 1m/s
-    const float descend_duration = 10.0f; // 降落持续10秒
-
-    log_file << "# === LANDING PHASE ===\n";
-    for (float t = 0; t < descend_duration; t += 0.1f) {
-        // 模拟垂直运动（向下）
-        current_altitude -= descend_speed * 0.1f;
-        current_altitude = std::max(current_altitude, 0.0f); // 防止负高度
-
-        // 更新传感器数据
-        float baro_pressure = sea_level_pressure * (1 - current_altitude / 800.0f);
-        _sensor_simulator._baro.setData(baro_pressure);
-        _sensor_simulator._gps.setAltitude(current_altitude);
-        _sensor_simulator._gps.setVelocity(Vector3f(0, 0, descend_speed)); // NED下速度向下为正
-
-        // IMU：模拟下降加速度（增加重力）
-        const float downward_accel = descend_speed * 0.5f;
-        _sensor_simulator._imu.setData(
-            Vector3f(0, 0, CONSTANTS_ONE_G + downward_accel),
+            Vector3f(0, 0, -CONSTANTS_ONE_G),
             Vector3f(0, 0, 0)
         );
 
-        // 运行100ms
+        _sensor_simulator._gps.setVelocity(Vector3f(0, 0, 0));
+
         _sensor_simulator.runSeconds(0.1f);
 
-        // 获取当前状态
         float baro_pressure_current = _sensor_simulator._baro.getData();
         float gps_alt_current = _sensor_simulator._gps.getData().alt;
 
-        // 获取EKF状态
         Vector3f ekf_position = _ekf->getPosition();
         Vector3f ekf_velocity = _ekf->getVelocity();
 
-        // 记录数据
         log_file << _sensor_simulator.getTime() - start_time << ","
                  << baro_pressure_current << ","
                  << gps_alt_current << ","
                  << _sensor_simulator._gps.getData().fix_type << ","
                  << _sensor_simulator._gps.getData().nsats << ","
-                 << CONSTANTS_ONE_G + downward_accel << "," // 模拟值
-                 << ekf_position(2) << ","
+                 << CONSTANTS_ONE_G << ","
+                 << -ekf_position(2) + _sensor_simulator._gps.getDefaultGpsData().alt << ","
                  << ekf_velocity(2) << "\n";
     }
 
-    // === 第4阶段：地面检测 ===
+    const float descend_speed = 1.0f;
+    const float descend_duration = 10.0f;
+
+    log_file << "# === LANDING PHASE ===\n";
+    for (float t = 0; t < descend_duration; t += 0.1f) {
+        current_altitude -= descend_speed * 0.1f;
+        current_altitude = std::max(current_altitude, 0.0f);
+
+        float baro_pressure = sea_level_pressure * (1 - _sensor_simulator._gps.getData().alt / 8000.0f);
+        _sensor_simulator._baro.setData(baro_pressure);
+        _sensor_simulator._gps.setAltitude(_sensor_simulator._gps.getDefaultGpsData().alt + current_altitude);
+        _sensor_simulator._gps.setVelocity(Vector3f(0, 0, descend_speed)); // NED下速度向下为正
+
+        const float downward_accel = descend_speed * 0.5f;
+        _sensor_simulator._imu.setData(
+            Vector3f(0, 0, -CONSTANTS_ONE_G + downward_accel),
+            Vector3f(0, 0, 0)
+        );
+
+        _sensor_simulator.runSeconds(0.1f);
+
+        float baro_pressure_current = _sensor_simulator._baro.getData();
+        float gps_alt_current = _sensor_simulator._gps.getData().alt;
+
+        Vector3f ekf_position = _ekf->getPosition();
+        Vector3f ekf_velocity = _ekf->getVelocity();
+
+        log_file << _sensor_simulator.getTime() - start_time << ","
+                 << baro_pressure_current << ","
+                 << gps_alt_current << ","
+                 << _sensor_simulator._gps.getData().fix_type << ","
+                 << _sensor_simulator._gps.getData().nsats << ","
+                 << CONSTANTS_ONE_G + downward_accel << ","
+                 << -ekf_position(2) + _sensor_simulator._gps.getDefaultGpsData().alt << ","
+                 << ekf_velocity(2) << "\n";
+    }
+
     log_file << "# === GROUND DETECTION PHASE ===\n";
-    // 模拟静止在地面的状态
     _sensor_simulator._imu.setData(
-        Vector3f(0, 0, CONSTANTS_ONE_G),
+        Vector3f(0, 0, -CONSTANTS_ONE_G),
         Vector3f(0, 0, 0)
     );
     _sensor_simulator._gps.setVelocity(Vector3f(0, 0, 0));
@@ -198,24 +169,21 @@ TEST_F(EkfGpsTest, VerticalTakeoffLanding)
     for (float t = 0; t < ground_duration; t += 0.1f) {
         _sensor_simulator.runSeconds(0.1f);
 
-        // 记录数据
         log_file << _sensor_simulator.getTime() - start_time << ","
                  << _sensor_simulator._baro.getData() << ","
                  << _sensor_simulator._gps.getData().alt << ","
                  << _sensor_simulator._gps.getData().fix_type << ","
                  << _sensor_simulator._gps.getData().nsats << ","
                  << CONSTANTS_ONE_G << ","
-                 << _ekf->getPosition()(2) << ","
+                 << -_ekf->getPosition()(2) +_sensor_simulator._gps.getDefaultGpsData().alt << ","
                  << _ekf->getVelocity()(2) << "\n";
     }
 
-    // 确保EKF检测到着陆
     //EXPECT_FALSE(_ekf->control_status().flags.in_air);
     //EXPECT_TRUE(_ekf->control_status().flags.vehicle_at_rest);
 
     log_file.close();
 
-    // 附加说明信息
     std::ofstream info_file("gps_test_info.txt");
     info_file << "Vertical Takeoff/Landing Test Data\n";
     info_file << "==================================\n";
